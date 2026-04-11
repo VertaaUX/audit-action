@@ -1,0 +1,87 @@
+name: 'VertaaUX Audit'
+description: 'Run UX audits with score thresholds and regression detection'
+author: 'VertaaUX'
+
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  url:
+    description: 'URL to audit'
+    required: true
+  api-key:
+    description: 'VertaaUX API key'
+    required: true
+  github-token:
+    description: 'GitHub token for PR comments'
+    required: false
+    default: ${{ github.token }}
+  mode:
+    description: 'Audit mode (basic, standard, deep)'
+    required: false
+    default: 'basic'
+  wait:
+    description: 'Wait for audit completion'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Wait timeout in milliseconds'
+    required: false
+    default: '120000'
+  threshold:
+    description: 'Overall score threshold (fail if below)'
+    required: false
+  thresholds:
+    description: 'Per-category thresholds in YAML format (usability: 70, accessibility: 80)'
+    required: false
+  fail-on-critical:
+    description: 'Fail if critical issues found'
+    required: false
+    default: 'true'
+  fail-on-regression:
+    description: 'Fail if score regresses from baseline'
+    required: false
+    default: 'false'
+  comment-on-pr:
+    description: 'Post comment on pull request'
+    required: false
+    default: 'true'
+  update-baseline:
+    description: 'Update baseline file (usually only on main)'
+    required: false
+    default: 'false'
+  baseline-file:
+    description: 'Path to baseline file (.vertaaux-baseline.json)'
+    required: false
+  config-file:
+    description: 'Path to .vertaaux.yml config file'
+    required: false
+
+outputs:
+  usability-score:
+    description: 'Usability score (0-100)'
+  clarity-score:
+    description: 'Clarity score (0-100)'
+  accessibility-score:
+    description: 'Accessibility score (0-100)'
+  overall-score:
+    description: 'Overall score (0-100)'
+  issues-count:
+    description: 'Total issues found'
+  critical-count:
+    description: 'Critical issues count'
+  report-url:
+    description: 'URL to full report on vertaaux.ai'
+  job-id:
+    description: 'Audit job ID'
+  result-json:
+    description: 'Full JSON result'
+  regression-detected:
+    description: 'Whether a score regression was detected'
+  baseline-comparison:
+    description: 'JSON comparison to baseline'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

@@ -1,0 +1,36 @@
+{
+  "name": "@vertaaux/audit-action",
+  "version": "1.0.0",
+  "description": "GitHub Action for running VertaaUX audits in CI/CD workflows",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "test": "echo \"Tests defined in separate test suite\" && exit 0",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "github-action",
+    "ux-audit",
+    "accessibility",
+    "usability",
+    "vertaaux"
+  ],
+  "author": "VertaaUX",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^6.0.0",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vercel/ncc": "^0.38.1",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
