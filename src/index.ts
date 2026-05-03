@@ -4,6 +4,7 @@ import * as github from "@actions/github";
 
 import { loadConfig, mergeConfig, validateConfig, MergedConfig } from "./config.js";
 import { loadBaseline, saveBaseline, compareToBaseline, ScoreComparison } from "./baseline.js";
+import { registerInputSecrets } from "./secrets.js";
 import {
   formatComment,
   postComment,
@@ -238,6 +239,16 @@ async function run(): Promise<void> {
     const url = core.getInput("url", { required: true });
     const apiKey = core.getInput("api-key", { required: true });
     const githubToken = core.getInput("github-token");
+
+    // Register sensitive inputs with the runner so they are masked in
+    // workflow logs (CWE-532). GitHub auto-masks values passed via
+    // ${{ secrets.X }}, but registering here is defense in depth: it
+    // covers the case where a workflow author passes a literal token
+    // or pulls one from a non-secret source, and the github-token
+    // default `${{ github.token }}` which the runner already protects
+    // but re-registering is harmless.
+    registerInputSecrets(apiKey, githubToken);
+
     const modeInput = core.getInput("mode") || "";
     const waitInput = core.getInput("wait") || "true";
     const timeoutInput = core.getInput("timeout") || "120000";

@@ -1,7 +1,7 @@
 import './sourcemap-register.cjs';import { createRequire as __WEBPACK_EXTERNAL_createRequire } from "module";
 /******/ var __webpack_modules__ = ({
 
-/***/ 2533:
+/***/ 4914:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 
@@ -141,7 +141,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.platform = exports.toPlatformPath = exports.toWin32Path = exports.toPosixPath = exports.markdownSummary = exports.summary = exports.getIDToken = exports.getState = exports.saveState = exports.group = exports.endGroup = exports.startGroup = exports.info = exports.notice = exports.warning = exports.error = exports.debug = exports.isDebug = exports.setFailed = exports.setCommandEcho = exports.setOutput = exports.getBooleanInput = exports.getMultilineInput = exports.getInput = exports.addPath = exports.setSecret = exports.exportVariable = exports.ExitCode = void 0;
-const command_1 = __nccwpck_require__(2533);
+const command_1 = __nccwpck_require__(4914);
 const file_command_1 = __nccwpck_require__(4753);
 const utils_1 = __nccwpck_require__(302);
 const os = __importStar(__nccwpck_require__(857));
@@ -40682,6 +40682,39 @@ function createBaseline(baselinePath, pages) {
     core.info(`Baseline created: ${filePath}`);
 }
 
+;// CONCATENATED MODULE: ./src/secrets.ts
+/**
+ * Secret-registration helpers for the VertaaUX GitHub Action.
+ *
+ * GitHub already masks values passed via `${{ secrets.X }}`, so calling
+ * `core.setSecret` here is defense in depth (CWE-532). It catches:
+ * - Workflows that pass a literal token in the YAML.
+ * - Workflows that pull a token from a non-secret source (env var,
+ *   downloaded artifact, output of another step) and feed it to `with:`.
+ * - The `github-token` default `${{ github.token }}` (which the runner
+ *   already protects, but re-registering is a no-op for already-masked
+ *   strings).
+ *
+ * Lives in its own file so it can be unit-tested without importing
+ * `index.ts` (which auto-runs the action on import).
+ */
+
+/**
+ * Register both sensitive action inputs with the runner so they are
+ * masked in workflow logs.
+ *
+ * Empty strings are ignored: `setSecret("")` would register the empty
+ * string as a secret, which the runner could then redact spuriously.
+ */
+function registerInputSecrets(apiKey, githubToken) {
+    if (apiKey) {
+        lib_core.setSecret(apiKey);
+    }
+    if (githubToken) {
+        lib_core.setSecret(githubToken);
+    }
+}
+
 ;// CONCATENATED MODULE: ./src/lib/pr-comment-formatter.ts
 /**
  * PR comment formatter (Phase 112 / ECO-04).
@@ -40945,6 +40978,7 @@ async function updateComment(octokit, context, commentId, body) {
 
 
 
+
 /**
  * Normalize issues from various formats to array
  */
@@ -41115,6 +41149,14 @@ async function run() {
         const url = lib_core.getInput("url", { required: true });
         const apiKey = lib_core.getInput("api-key", { required: true });
         const githubToken = lib_core.getInput("github-token");
+        // Register sensitive inputs with the runner so they are masked in
+        // workflow logs (CWE-532). GitHub auto-masks values passed via
+        // ${{ secrets.X }}, but registering here is defense in depth: it
+        // covers the case where a workflow author passes a literal token
+        // or pulls one from a non-secret source, and the github-token
+        // default `${{ github.token }}` which the runner already protects
+        // but re-registering is harmless.
+        registerInputSecrets(apiKey, githubToken);
         const modeInput = lib_core.getInput("mode") || "";
         const waitInput = lib_core.getInput("wait") || "true";
         const timeoutInput = lib_core.getInput("timeout") || "120000";
