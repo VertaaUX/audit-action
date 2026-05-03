@@ -31841,19 +31841,26 @@ function composeNode(ctx, token, props, onError) {
         case 'block-map':
         case 'block-seq':
         case 'flow-collection':
-            node = composeCollection.composeCollection(CN, ctx, token, props, onError);
-            if (anchor)
-                node.anchor = anchor.source.substring(1);
+            try {
+                node = composeCollection.composeCollection(CN, ctx, token, props, onError);
+                if (anchor)
+                    node.anchor = anchor.source.substring(1);
+            }
+            catch (error) {
+                // Almost certainly here due to a stack overflow
+                const message = error instanceof Error ? error.message : String(error);
+                onError(token, 'RESOURCE_EXHAUSTION', message);
+            }
             break;
         default: {
             const message = token.type === 'error'
                 ? token.message
                 : `Unsupported token (type: ${token.type})`;
             onError(token, 'UNEXPECTED_TOKEN', message);
-            node = composeEmptyNode(ctx, token.offset, undefined, null, props, onError);
             isSrcToken = false;
         }
     }
+    node ?? (node = composeEmptyNode(ctx, token.offset, undefined, null, props, onError));
     if (anchor && node.anchor === '')
         onError(anchor, 'BAD_ALIAS', 'Anchor cannot be an empty string');
     if (atKey &&
@@ -39013,6 +39020,7 @@ function createStringifyContext(doc, options) {
         nullStr: 'null',
         simpleKeys: false,
         singleQuote: null,
+        trailingComma: false,
         trueStr: 'true',
         verifyAliasOrder: true
     }, doc.schema.toStringOptions, options);
@@ -39233,12 +39241,22 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
         if (comment)
             reqNewline = true;
         let str = stringify.stringify(item, itemCtx, () => (comment = null));
-        if (i < items.length - 1)
+        reqNewline || (reqNewline = lines.length > linesAtValue || str.includes('\n'));
+        if (i < items.length - 1) {
             str += ',';
+        }
+        else if (ctx.options.trailingComma) {
+            if (ctx.options.lineWidth > 0) {
+                reqNewline || (reqNewline = lines.reduce((sum, line) => sum + line.length + 2, 2) +
+                    (str.length + 2) >
+                    ctx.options.lineWidth);
+            }
+            if (reqNewline) {
+                str += ',';
+            }
+        }
         if (comment)
             str += stringifyComment.lineComment(str, itemIndent, commentString(comment));
-        if (!reqNewline && (lines.length > linesAtValue || str.includes('\n')))
-            reqNewline = true;
         lines.push(str);
         linesAtValue = lines.length;
     }
@@ -40238,12 +40256,41 @@ var dist = __nccwpck_require__(8815);
  * Config module for VertaaUX GitHub Action
  * Handles .vertaaux.yml configuration file parsing and merging
  */
+/* eslint-disable security/detect-non-literal-fs-filename -- config paths are constrained to .vertaaux.yml / .vertaaux.yaml or an explicit user-supplied configFile, and baseline paths are validated by validateBaselineFile() */
 
 
 
 
 const DEFAULT_CONFIG_PATH = ".vertaaux.yml";
 const DEFAULT_BASELINE_PATH = ".vertaaux-baseline.json";
+const BASELINE_BASENAME_PATTERN = /^[A-Za-z0-9._-]+\.json$/;
+/**
+ * Validate a baseline-file path supplied via action input or .vertaaux.yml.
+ *
+ * Reject absolute paths and `..` traversal so a workflow author cannot
+ * direct the action's JSON write outside the repository checkout (CWE-22).
+ * Also constrain the basename to a JSON file with safe characters so the
+ * value can never be mistaken for, e.g., `.github/workflows/x.yml`.
+ *
+ * Returns the normalized relative path on success; throws on rejection.
+ */
+function validateBaselineFile(input, source) {
+    if (external_path_.isAbsolute(input)) {
+        throw new Error(`${source} must be a relative path within the repository (got absolute path)`);
+    }
+    const normalized = external_path_.normalize(input);
+    if (external_path_.isAbsolute(normalized)) {
+        throw new Error(`${source} must be a relative path within the repository`);
+    }
+    const segments = normalized.split(external_path_.sep);
+    if (segments.includes("..")) {
+        throw new Error(`${source} must not traverse outside the repository (".." segment rejected)`);
+    }
+    if (!BASELINE_BASENAME_PATTERN.test(external_path_.basename(normalized))) {
+        throw new Error(`${source} must end in .json and contain only [A-Za-z0-9._-] characters`);
+    }
+    return normalized;
+}
 // Default configuration values
 const DEFAULTS = {
     thresholds: {},
@@ -40344,7 +40391,7 @@ function mergeConfig(fileConfig, inputs) {
         config.updateExistingComment = fileConfig.update_existing_comment;
     }
     if (fileConfig.baseline_file) {
-        config.baselineFile = fileConfig.baseline_file;
+        config.baselineFile = validateBaselineFile(fileConfig.baseline_file, "baseline_file (config)");
     }
     if (fileConfig.update_baseline_on_main !== undefined) {
         config.updateBaselineOnMain = fileConfig.update_baseline_on_main;
@@ -40376,7 +40423,7 @@ function mergeConfig(fileConfig, inputs) {
         config.updateBaselineOnMain = parseBool(inputs.updateBaseline, config.updateBaselineOnMain);
     }
     if (inputs.baselineFile) {
-        config.baselineFile = inputs.baselineFile;
+        config.baselineFile = validateBaselineFile(inputs.baselineFile, "baseline-file input");
     }
     if (inputs.mode) {
         config.mode = inputs.mode;
@@ -40410,10 +40457,27 @@ function validateConfig(config) {
  * Baseline module for VertaaUX GitHub Action
  * Handles regression detection via committed baseline file
  */
+/* eslint-disable security/detect-non-literal-fs-filename, security/detect-object-injection -- fs paths are validated by resolveBaselinePath() / validateBaselineFile(); page-keyed object access is the data shape of BaselineData.pages */
 
 
 
 const baseline_DEFAULT_BASELINE_PATH = ".vertaaux-baseline.json";
+/**
+ * Resolve `baselinePath` against `process.cwd()` and assert the result stays
+ * inside the repository checkout.
+ *
+ * Layer 1 in `config.ts` already rejects absolute paths and `..` traversal at
+ * input time; this is belt-and-braces in case a future code path reaches the
+ * fs APIs without going through that validator (CWE-22 defense in depth).
+ */
+function resolveBaselinePath(baselinePath) {
+    const cwd = external_path_.resolve(process.cwd());
+    const filePath = external_path_.resolve(cwd, baselinePath || baseline_DEFAULT_BASELINE_PATH);
+    if (filePath !== cwd && !filePath.startsWith(cwd + external_path_.sep)) {
+        throw new Error(`baseline path must resolve inside the repository checkout (got: ${filePath})`);
+    }
+    return filePath;
+}
 /**
  * Normalize URL for baseline key (remove trailing slashes, lowercase)
  */
@@ -40435,7 +40499,7 @@ function normalizeUrl(url) {
  * Returns null if file doesn't exist (new repo scenario)
  */
 function loadBaseline(baselinePath) {
-    const filePath = external_path_.resolve(process.cwd(), baselinePath || baseline_DEFAULT_BASELINE_PATH);
+    const filePath = resolveBaselinePath(baselinePath);
     if (!external_fs_.existsSync(filePath)) {
         lib_core.debug(`Baseline file not found: ${filePath}`);
         return null;
@@ -40460,7 +40524,7 @@ function loadBaseline(baselinePath) {
  * Preserves other URLs in the baseline while updating the target URL
  */
 function saveBaseline(baselinePath, url, scores, issuesCount) {
-    const filePath = external_path_.resolve(process.cwd(), baselinePath || baseline_DEFAULT_BASELINE_PATH);
+    const filePath = resolveBaselinePath(baselinePath);
     // Load existing baseline or create new
     let baseline = loadBaseline(baselinePath);
     if (!baseline) {
@@ -40565,7 +40629,7 @@ function createBaseline(baselinePath, pages) {
             issues_count: page.issuesCount,
         };
     }
-    const filePath = path.resolve(process.cwd(), baselinePath || baseline_DEFAULT_BASELINE_PATH);
+    const filePath = resolveBaselinePath(baselinePath);
     const content = JSON.stringify(baseline, null, 2);
     fs.writeFileSync(filePath, content, "utf-8");
     core.info(`Baseline created: ${filePath}`);

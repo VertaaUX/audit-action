@@ -3,6 +3,8 @@
  * Handles .vertaaux.yml configuration file parsing and merging
  */
 
+/* eslint-disable security/detect-non-literal-fs-filename -- config paths are constrained to .vertaaux.yml / .vertaaux.yaml or an explicit user-supplied configFile, and baseline paths are validated by validateBaselineFile() */
+
 import * as fs from "fs";
 import * as path from "path";
 import * as core from "@actions/core";
@@ -54,6 +56,49 @@ export interface MergedConfig {
 
 const DEFAULT_CONFIG_PATH = ".vertaaux.yml";
 const DEFAULT_BASELINE_PATH = ".vertaaux-baseline.json";
+
+const BASELINE_BASENAME_PATTERN = /^[A-Za-z0-9._-]+\.json$/;
+
+/**
+ * Validate a baseline-file path supplied via action input or .vertaaux.yml.
+ *
+ * Reject absolute paths and `..` traversal so a workflow author cannot
+ * direct the action's JSON write outside the repository checkout (CWE-22).
+ * Also constrain the basename to a JSON file with safe characters so the
+ * value can never be mistaken for, e.g., `.github/workflows/x.yml`.
+ *
+ * Returns the normalized relative path on success; throws on rejection.
+ */
+export function validateBaselineFile(input: string, source: string): string {
+  if (path.isAbsolute(input)) {
+    throw new Error(
+      `${source} must be a relative path within the repository (got absolute path)`
+    );
+  }
+
+  const normalized = path.normalize(input);
+
+  if (path.isAbsolute(normalized)) {
+    throw new Error(
+      `${source} must be a relative path within the repository`
+    );
+  }
+
+  const segments = normalized.split(path.sep);
+  if (segments.includes("..")) {
+    throw new Error(
+      `${source} must not traverse outside the repository (".." segment rejected)`
+    );
+  }
+
+  if (!BASELINE_BASENAME_PATTERN.test(path.basename(normalized))) {
+    throw new Error(
+      `${source} must end in .json and contain only [A-Za-z0-9._-] characters`
+    );
+  }
+
+  return normalized;
+}
 
 // Default configuration values
 const DEFAULTS: MergedConfig = {
@@ -169,7 +214,10 @@ export function mergeConfig(
     config.updateExistingComment = fileConfig.update_existing_comment;
   }
   if (fileConfig.baseline_file) {
-    config.baselineFile = fileConfig.baseline_file;
+    config.baselineFile = validateBaselineFile(
+      fileConfig.baseline_file,
+      "baseline_file (config)"
+    );
   }
   if (fileConfig.update_baseline_on_main !== undefined) {
     config.updateBaselineOnMain = fileConfig.update_baseline_on_main;
@@ -202,7 +250,10 @@ export function mergeConfig(
     config.updateBaselineOnMain = parseBool(inputs.updateBaseline, config.updateBaselineOnMain);
   }
   if (inputs.baselineFile) {
-    config.baselineFile = inputs.baselineFile;
+    config.baselineFile = validateBaselineFile(
+      inputs.baselineFile,
+      "baseline-file input"
+    );
   }
   if (inputs.mode) {
     config.mode = inputs.mode;

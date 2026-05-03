@@ -3,6 +3,8 @@
  * Handles regression detection via committed baseline file
  */
 
+/* eslint-disable security/detect-non-literal-fs-filename, security/detect-object-injection -- fs paths are validated by resolveBaselinePath() / validateBaselineFile(); page-keyed object access is the data shape of BaselineData.pages */
+
 import * as fs from "fs";
 import * as path from "path";
 import * as core from "@actions/core";
@@ -41,6 +43,27 @@ export interface CurrentScores {
 const DEFAULT_BASELINE_PATH = ".vertaaux-baseline.json";
 
 /**
+ * Resolve `baselinePath` against `process.cwd()` and assert the result stays
+ * inside the repository checkout.
+ *
+ * Layer 1 in `config.ts` already rejects absolute paths and `..` traversal at
+ * input time; this is belt-and-braces in case a future code path reaches the
+ * fs APIs without going through that validator (CWE-22 defense in depth).
+ */
+function resolveBaselinePath(baselinePath: string | undefined): string {
+  const cwd = path.resolve(process.cwd());
+  const filePath = path.resolve(cwd, baselinePath || DEFAULT_BASELINE_PATH);
+
+  if (filePath !== cwd && !filePath.startsWith(cwd + path.sep)) {
+    throw new Error(
+      `baseline path must resolve inside the repository checkout (got: ${filePath})`
+    );
+  }
+
+  return filePath;
+}
+
+/**
  * Normalize URL for baseline key (remove trailing slashes, lowercase)
  */
 function normalizeUrl(url: string): string {
@@ -61,10 +84,7 @@ function normalizeUrl(url: string): string {
  * Returns null if file doesn't exist (new repo scenario)
  */
 export function loadBaseline(baselinePath?: string): BaselineData | null {
-  const filePath = path.resolve(
-    process.cwd(),
-    baselinePath || DEFAULT_BASELINE_PATH
-  );
+  const filePath = resolveBaselinePath(baselinePath);
 
   if (!fs.existsSync(filePath)) {
     core.debug(`Baseline file not found: ${filePath}`);
@@ -98,10 +118,7 @@ export function saveBaseline(
   scores: CurrentScores,
   issuesCount: number
 ): void {
-  const filePath = path.resolve(
-    process.cwd(),
-    baselinePath || DEFAULT_BASELINE_PATH
-  );
+  const filePath = resolveBaselinePath(baselinePath);
 
   // Load existing baseline or create new
   let baseline = loadBaseline(baselinePath);
@@ -239,10 +256,7 @@ export function createBaseline(
     };
   }
 
-  const filePath = path.resolve(
-    process.cwd(),
-    baselinePath || DEFAULT_BASELINE_PATH
-  );
+  const filePath = resolveBaselinePath(baselinePath);
 
   const content = JSON.stringify(baseline, null, 2);
   fs.writeFileSync(filePath, content, "utf-8");

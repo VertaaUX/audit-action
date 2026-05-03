@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
-    "test": "echo \"Tests defined in separate test suite\" && exit 0",
+    "test": "node --import tsx/esm --test __tests__/*.test.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
@@ -28,6 +28,7 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@vercel/ncc": "^0.38.1",
+    "tsx": "^4.19.0",
     "typescript": "^5.3.0"
   },
   "engines": {
