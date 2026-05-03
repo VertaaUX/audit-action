@@ -40264,17 +40264,16 @@ var dist = __nccwpck_require__(8815);
 const DEFAULT_CONFIG_PATH = ".vertaaux.yml";
 const DEFAULT_BASELINE_PATH = ".vertaaux-baseline.json";
 const BASELINE_BASENAME_PATTERN = /^[A-Za-z0-9._-]+\.json$/;
+const CONFIG_BASENAME_PATTERN = /^[A-Za-z0-9._-]+\.(yml|yaml)$/;
 /**
- * Validate a baseline-file path supplied via action input or .vertaaux.yml.
+ * Reject absolute paths, `..` traversal, and basenames that don't match
+ * the supplied pattern. Returns the normalized relative path on success.
  *
- * Reject absolute paths and `..` traversal so a workflow author cannot
- * direct the action's JSON write outside the repository checkout (CWE-22).
- * Also constrain the basename to a JSON file with safe characters so the
- * value can never be mistaken for, e.g., `.github/workflows/x.yml`.
- *
- * Returns the normalized relative path on success; throws on rejection.
+ * Shared helper for `validateBaselineFile` (write-side, .json) and
+ * `validateConfigFile` (read-side, .yml/.yaml). Both prevent CWE-22 by
+ * keeping action-input paths inside the repository checkout.
  */
-function validateBaselineFile(input, source) {
+function validateRelativePath(input, source, basenamePattern, basenameHint) {
     if (external_path_.isAbsolute(input)) {
         throw new Error(`${source} must be a relative path within the repository (got absolute path)`);
     }
@@ -40286,10 +40285,46 @@ function validateBaselineFile(input, source) {
     if (segments.includes("..")) {
         throw new Error(`${source} must not traverse outside the repository (".." segment rejected)`);
     }
-    if (!BASELINE_BASENAME_PATTERN.test(external_path_.basename(normalized))) {
-        throw new Error(`${source} must end in .json and contain only [A-Za-z0-9._-] characters`);
+    if (!basenamePattern.test(external_path_.basename(normalized))) {
+        throw new Error(`${source} must ${basenameHint} and contain only [A-Za-z0-9._-] characters`);
     }
     return normalized;
+}
+/**
+ * Validate a baseline-file path supplied via action input or .vertaaux.yml.
+ *
+ * Reject absolute paths and `..` traversal so a workflow author cannot
+ * direct the action's JSON write outside the repository checkout (CWE-22).
+ * Also constrain the basename to a JSON file with safe characters so the
+ * value can never be mistaken for, e.g., `.github/workflows/x.yml`.
+ */
+function validateBaselineFile(input, source) {
+    return validateRelativePath(input, source, BASELINE_BASENAME_PATTERN, "end in .json");
+}
+/**
+ * Validate a config-file path supplied via the `config-file` action input.
+ *
+ * Reject absolute paths and `..` traversal so a workflow author cannot
+ * direct the action's `fs.readFileSync` at sensitive runner paths like
+ * `/proc/self/environ`, `~/.aws/credentials`, or repo-adjacent `.env`
+ * files (CWE-22 read primitive). Constrain the basename to YAML files
+ * so the input can't redirect to arbitrary file types.
+ */
+function validateConfigFile(input, source) {
+    return validateRelativePath(input, source, CONFIG_BASENAME_PATTERN, "end in .yml or .yaml");
+}
+/**
+ * Resolve a config path against `process.cwd()` and assert the result stays
+ * inside the repository checkout. Belt-and-braces guard for `loadConfig`,
+ * mirroring the `resolveBaselinePath` pattern in `baseline.ts`.
+ */
+function resolveConfigPath(configPath) {
+    const cwd = external_path_.resolve(process.cwd());
+    const filePath = external_path_.resolve(cwd, configPath);
+    if (filePath !== cwd && !filePath.startsWith(cwd + external_path_.sep)) {
+        throw new Error(`config path must resolve inside the repository checkout (got: ${filePath})`);
+    }
+    return filePath;
 }
 // Default configuration values
 const DEFAULTS = {
@@ -40327,12 +40362,19 @@ function parseThresholdsInput(input) {
  * Returns empty config if file doesn't exist
  */
 function loadConfig(configPath) {
-    // Try specified path first, then default
-    const paths = configPath
-        ? [configPath]
+    // Layer 1: validate user-supplied path. The default paths are constants
+    // and don't need this; only an explicit `config-file` input does.
+    const validatedConfigPath = configPath
+        ? validateConfigFile(configPath, "config-file input")
+        : undefined;
+    const paths = validatedConfigPath
+        ? [validatedConfigPath]
         : [DEFAULT_CONFIG_PATH, ".vertaaux.yaml"];
     for (const tryPath of paths) {
-        const resolvedPath = external_path_.resolve(process.cwd(), tryPath);
+        // Layer 2: belt-and-braces. Even if Layer 1 is bypassed (or the call
+        // site changes in the future), reject anything that resolves outside
+        // the repository checkout.
+        const resolvedPath = resolveConfigPath(tryPath);
         if (external_fs_.existsSync(resolvedPath)) {
             try {
                 const content = external_fs_.readFileSync(resolvedPath, "utf-8");
@@ -40344,8 +40386,13 @@ function loadConfig(configPath) {
                 lib_core.debug(`Loaded config from: ${resolvedPath}`);
                 return parsed;
             }
-            catch (error) {
-                lib_core.warning(`Failed to parse config file: ${error}`);
+            catch {
+                // Intentionally drop the error contents. The yaml parser surfaces
+                // file content snippets in its error messages (line context around
+                // the parse failure), which would partially defeat the path-
+                // traversal mitigation if the file happens to contain secrets
+                // (e.g. /proc/self/environ, .env). Log the path only.
+                lib_core.warning(`Failed to parse config file at ${resolvedPath}`);
                 return {};
             }
         }
